@@ -52,10 +52,20 @@ export namespace Clipboard {
       }
     }
 
+    // Try standard clipboard first
     const text = await clipboardy.read().catch(() => {})
     if (text) {
       return { data: text, mime: "text/plain" }
     }
+    // Fallback to primary selection used by middle‑click paste on X11/Wayland
+    try {
+      const primary = await $`xsel -p -o`.nothrow().text()
+      if (primary) return { data: primary, mime: "text/plain" }
+    } catch {}
+    try {
+      const primaryWayland = await $`wl-paste --type text/plain`.nothrow().text()
+      if (primaryWayland) return { data: primaryWayland, mime: "text/plain" }
+    } catch {}
   }
 
   const getCopyMethod = lazy(() => {
