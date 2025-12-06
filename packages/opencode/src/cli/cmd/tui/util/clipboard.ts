@@ -41,31 +41,47 @@ export namespace Clipboard {
       }
     }
 
-    if (os === "linux") {
-      const wayland = await $`wl-paste -t image/png`.nothrow().arrayBuffer()
-      if (wayland && wayland.byteLength > 0) {
-        return { data: Buffer.from(wayland).toString("base64"), mime: "image/png" }
+    const isLinuxish = os === "linux" || release().includes("WSL")
+    if (isLinuxish) {
+      // Prefer wl-paste (wl-clipboard package typically provides wl-paste/wl-copy).
+      // If only `wl-clipboard` binary exists, try using it as a fallback.
+      const hasWlPaste = Bun.which("wl-paste")
+      const hasWlClipboard = Bun.which("wl-clipboard")
+
+      if (hasWlPaste) {
+        const wayland = await $`wl-paste -t image/png`.nothrow().arrayBuffer()
+        if (wayland && wayland.byteLength > 0) {
+          return { data: Buffer.from(wayland).toString("base64"), mime: "image/png" }
+        }
+      } else if (hasWlClipboard) {
+        try {
+          const wayland = await $`wl-clipboard --type image/png --paste`.nothrow().arrayBuffer()
+          if (wayland && wayland.byteLength > 0) {
+            return { data: Buffer.from(wayland).toString("base64"), mime: "image/png" }
+          }
+        } catch { }
       }
+
       const x11 = await $`xclip -selection clipboard -t image/png -o`.nothrow().arrayBuffer()
       if (x11 && x11.byteLength > 0) {
         return { data: Buffer.from(x11).toString("base64"), mime: "image/png" }
       }
-    }
 
-    // Try standard clipboard first
-    const text = await clipboardy.read().catch(() => {})
-    if (text) {
-      return { data: text, mime: "text/plain" }
+      // Fallback to primary selection used by middle‑click paste on X11/Wayland
+      try {
+        const primary = await $`xsel -p -o`.nothrow().text()
+        if (primary) return { data: primary, mime: "text/plain" }
+      } catch { }
+      try {
+        if (hasWlPaste) {
+          const primaryWayland = await $`wl-paste --type text/plain`.nothrow().text()
+          if (primaryWayland) return { data: primaryWayland, mime: "text/plain" }
+        } else if (hasWlClipboard) {
+          const primaryWayland = await $`wl-clipboard --type text/plain --paste`.nothrow().text()
+          if (primaryWayland) return { data: primaryWayland, mime: "text/plain" }
+        }
+      } catch { }
     }
-    // Fallback to primary selection used by middle‑click paste on X11/Wayland
-    try {
-      const primary = await $`xsel -p -o`.nothrow().text()
-      if (primary) return { data: primary, mime: "text/plain" }
-    } catch {}
-    try {
-      const primaryWayland = await $`wl-paste --type text/plain`.nothrow().text()
-      if (primaryWayland) return { data: primaryWayland, mime: "text/plain" }
-    } catch {}
   }
 
   const getCopyMethod = lazy(() => {
@@ -86,7 +102,7 @@ export namespace Clipboard {
           const proc = Bun.spawn(["wl-copy"], { stdin: "pipe", stdout: "ignore", stderr: "ignore" })
           proc.stdin.write(text)
           proc.stdin.end()
-          await proc.exited.catch(() => {})
+          await proc.exited.catch(() => { })
         }
       }
       if (Bun.which("xclip")) {
@@ -99,7 +115,7 @@ export namespace Clipboard {
           })
           proc.stdin.write(text)
           proc.stdin.end()
-          await proc.exited.catch(() => {})
+          await proc.exited.catch(() => { })
         }
       }
       if (Bun.which("xsel")) {
@@ -112,7 +128,7 @@ export namespace Clipboard {
           })
           proc.stdin.write(text)
           proc.stdin.end()
-          await proc.exited.catch(() => {})
+          await proc.exited.catch(() => { })
         }
       }
     }
@@ -127,7 +143,7 @@ export namespace Clipboard {
 
     console.log("clipboard: no native support")
     return async (text: string) => {
-      await clipboardy.write(text).catch(() => {})
+      await clipboardy.write(text).catch(() => { })
     }
   })
 
